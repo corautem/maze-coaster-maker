@@ -45,10 +45,13 @@ The script builds the same 3D coaster as the 3MF.
 | `tools\make_icon.py` | Draws the app icon during a build |
 | `build.ps1` | Rebuilds the `.exe` |
 | `requirements.txt` | Python packages for running from source and building |
+| `CHANGELOG.md` | What changed in each version, and what's waiting for the next build |
 
 ## Rebuilding the app
 
-Only needed after changing the code. Close the app first, then:
+Only needed after changing the code. Before a rebuild, check the **Unreleased** section of [CHANGELOG.md](CHANGELOG.md): it lists what the new build will include. Raise `APP_VERSION` in `coaster_app.py`, then move those entries under the new version number.
+
+Close the app first, then:
 
 ```
 pip install -r requirements.txt
