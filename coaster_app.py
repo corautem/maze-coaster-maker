@@ -590,7 +590,8 @@ class App(tk.Tk):
     def about(self):
         messagebox.showinfo(f"About {APP_NAME}",
                             f"{APP_NAME} {APP_VERSION}\n\n"
-                            "Circular-maze coasters with 1 mm walls and gaps, saved as 3MF for 3D printing or DXF for Fusion 360.\n\n"
+                            "Circular-maze coasters with customisable wall and gap widths, saved as 3MF "
+                            "for 3D printing or DXF for Fusion 360.\n\n"
                             f"Settings are kept in:\n{SETTINGS_FILE.parent}")
 
     def info_box(self, title, text):

@@ -1,6 +1,6 @@
 # Maze Coaster Maker
 
-A small Windows app that makes 3D-printable coasters with a circular maze of **1 mm walls and 1 mm gaps**, and saves them as a **3MF** file you open straight in your slicer. No Fusion 360 needed for printing.
+A small Windows app that makes 3D-printable coasters with a circular maze, with **customisable wall and gap widths** (1 mm each by default), and saves them as a **3MF** file you open straight in your slicer. No Fusion 360 needed for printing.
 
 ## Use the app
 
