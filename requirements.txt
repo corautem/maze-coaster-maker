@@ -1,0 +1,6 @@
+# running coaster_gen.py / coaster_app.py from source
+shapely>=2.1
+ezdxf>=1.1
+# building dist\MazeCoasterMaker.exe with build.ps1
+pyinstaller>=6
+pillow>=10

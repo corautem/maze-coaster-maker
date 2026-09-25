@@ -1,0 +1,12 @@
+# the built app is published as a GitHub release, not committed
+dist/
+build/
+*.spec
+
+# generated designs and caches
+output/
+__pycache__/
+*.pyc
+
+# editor/debug settings Fusion 360 creates next to scripts
+.vscode/
