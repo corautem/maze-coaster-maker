@@ -1,6 +1,6 @@
 # running coaster_gen.py / coaster_app.py from source
 shapely>=2.1
 ezdxf>=1.1
-# building dist\MazeCoasterMaker.exe with build.ps1
+# building the standalone app (tools/build.py); Pillow also draws the icon and takes check screenshots
 pyinstaller>=6
 pillow>=10

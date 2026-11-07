@@ -2,9 +2,19 @@
 
 ## Unreleased
 
-Changes in the source code that aren't in the released `.exe` yet. They go out with the next rebuild.
+Changes in the source code that aren't in a released version yet. They go out with the next release.
 
-- Help → About now describes the wall and gap widths as customisable. It said "1 mm walls and gaps", but 1 mm is only the default.
+- Nothing yet.
+
+## 2.0.0
+
+- Runs on Windows, macOS (Apple silicon and Intel) and Linux (x64 and ARM, such as a 64-bit Raspberry Pi). GitHub builds and checks all five versions for every release.
+- New file types to save: **STEP**, an exact solid that opens as an editable body in CAD programs such as FreeCAD, Fusion and Onshape, and **STL**, the same model as the 3MF for programs that don't read 3MF.
+- Removed the Fusion 360 script and the Fusion 360 menu. To edit a coaster in a CAD program, save it as STEP or DXF.
+- Now free software under the GNU General Public License, version 3 or later. **Help → Licence** and **Help → Third-party licences** show the licence texts.
+- Help → About describes the wall and gap widths as customisable. It said "1 mm walls and gaps", but 1 mm is only the default.
+- The window grows to fit its controls, so nothing is cut off on systems with larger fonts.
+- `tools/build.py` replaces `build.ps1` and builds the app on any of the three systems.
 
 ## 1.3.0
 

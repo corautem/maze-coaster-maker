@@ -1,0 +1,117 @@
+# Builds Maze Coaster Maker for Windows, macOS and Linux on GitHub's machines and checks
+# each build. Run it by hand from the Actions tab, or push a version tag (v2.0.0 and so on)
+# to also publish the builds as a GitHub release.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows-x64, runner: windows-latest }
+          - { name: macos-arm64, runner: macos-15 }
+          - { name: macos-x64, runner: macos-15-intel }
+          - { name: linux-x64, runner: ubuntu-22.04 }        # oldest Ubuntu: the app then runs on newer ones too
+          - { name: linux-arm64, runner: ubuntu-22.04-arm }  # e.g. 64-bit Raspberry Pi OS
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install Tk and a virtual screen (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libtk8.6 xvfb
+
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt
+
+      - name: Check the window, run from source
+        if: runner.os != 'Linux'
+        run: python tools/gui_check.py screenshots/source
+
+      - name: Check the window, run from source (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1400x1000x24" python tools/gui_check.py screenshots/source
+
+      - name: Build, self-test, and check the packaged app opens
+        if: runner.os != 'Linux'
+        run: python tools/build.py --launch-check screenshots
+
+      - name: Build, self-test, and check the packaged app opens (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a -s "-screen 0 1400x1000x24" python tools/build.py --launch-check screenshots
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: screenshots-${{ matrix.name }}
+          path: screenshots/**/*.png
+          if-no-files-found: ignore
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: app-*
+          path: dist
+          merge-multiple: true
+
+      - name: Check the tag matches the app's version
+        run: |
+          version=$(sed -n 's/^APP_VERSION = "\(.*\)"$/\1/p' coaster_app.py)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "The tag is $GITHUB_REF_NAME but APP_VERSION in coaster_app.py is $version"; exit 1
+          fi
+
+      - name: Add GEOS's source code (its LGPL licence asks for it to come with the app)
+        run: |
+          versions=$(python3 -c "import glob, json; print(' '.join(sorted({json.load(open(f))['geos'] for f in glob.glob('dist/build-info-*.json')})))")
+          for v in $versions; do
+            curl -fsSL -o "dist/geos-$v.tar.bz2" "https://download.osgeo.org/geos/geos-$v.tar.bz2"
+          done
+          rm dist/build-info-*.json
+
+      - name: Write the release notes from CHANGELOG.md
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          version = os.environ["GITHUB_REF_NAME"][1:]
+          changelog = open("CHANGELOG.md", encoding="utf-8").read()
+          found = re.search(rf"^## {re.escape(version)}\b[^\n]*\n(.*?)(?=^## |\Z)", changelog, re.S | re.M)
+          downloads = open(".github/release-downloads.md", encoding="utf-8").read()
+          notes = (found.group(1).strip() + "\n\n" if found else "") + downloads.replace("VERSION", version)
+          open("notes.md", "w", encoding="utf-8").write(notes)
+          EOF
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Maze Coaster Maker ${GITHUB_REF_NAME#v}" --notes-file notes.md

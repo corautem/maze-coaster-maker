@@ -1,8 +1,17 @@
+# Maze Coaster Maker: circular-maze coasters for 3D printing.
+# Copyright (C) 2026 corautem
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY; see the
+# LICENSE file for details.
 """Maze Coaster Maker: a window around coaster_gen.py.
 
-Pick a shape and pattern, click Generate preview to see it, then Save to write
-the DXF for Fusion 360 plus an SVG preview to the output folder. Runs from source
-(python coaster_app.py) or as the packaged Windows app built by build.ps1.
+Pick a shape and pattern, click Generate preview to see it, then Save to write a
+3MF for printing (plus a DXF drawing and an SVG picture if ticked) to the output
+folder. Runs on Windows, macOS and Linux, from source (python coaster_app.py) or
+as the packaged app built by tools/build.py.
 """
 import ctypes
 import json
@@ -10,11 +19,12 @@ import math
 import os
 import queue
 import random
-import shutil
+import subprocess
 import sys
 import threading
 import traceback
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from dataclasses import replace
 from tkinter import filedialog, messagebox, ttk
@@ -22,11 +32,24 @@ from tkinter import filedialog, messagebox, ttk
 import coaster_gen as cg
 
 APP_NAME = "Maze Coaster Maker"
-APP_VERSION = "1.3.0"
-APPDATA = Path(os.environ.get("APPDATA", Path.home()))
-SETTINGS_FILE = APPDATA / APP_NAME / "settings.json"
-FUSION_HOME = APPDATA / "Autodesk" / "Autodesk Fusion 360"
-FUSION_SCRIPT_DIR = FUSION_HOME / "API" / "Scripts" / "CoasterBuilder"
+APP_VERSION = "2.0.0"
+COPYRIGHT = "Copyright © 2026 corautem"
+SOURCE_URL = "https://github.com/corautem/maze-coaster-maker"
+
+WINDOWS = sys.platform == "win32"
+MAC = sys.platform == "darwin"
+SHORTCUT = ("Command", "Cmd") if MAC else ("Control", "Ctrl")  # (Tk event modifier, menu label)
+
+
+def settings_dir() -> Path:
+    if WINDOWS:
+        return Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+    if MAC:
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "maze-coaster-maker"
+
+
+SETTINGS_FILE = settings_dir() / "settings.json"
 
 SHAPES = {"Circle": "circle", "Hexagon": "hexagon", "Octagon": "octagon",
           "Rounded square": "rounded-square", "Flower": "flower", "Custom outline (DXF file)": "custom"}
@@ -38,17 +61,6 @@ STAT_LABELS = {"cells": "maze cells", "centre_d": "centre diameter (mm)"}
 
 WOOD, WOOD_EDGE, CHANNEL = "#e6d7b9", "#8a7556", "#3a2e27"
 PREVIEW_STEP = math.radians(2)  # coarser arcs than the DXF; plenty for the screen
-
-FUSION_STEPS = """\
-You only need Fusion 360 to edit a coaster further. For printing, just save a 3MF.
-
-1. Fusion 360 menu (in this app) → Add CoasterBuilder script to Fusion. You only do this once.
-2. In Fusion 360, press Shift+S to open Scripts and Add-Ins. Restart Fusion first if it was open during step 1.
-3. Select CoasterBuilder under My Scripts and click Run.
-4. Pick one or more .dxf files from your output folder (tick DXF before saving; hold Ctrl to pick several).
-5. Enter base thickness and wall height in mm. "2, 2" gives a 2 mm floor with 2 mm tall walls.
-
-The coasters appear in a row, 10 mm apart, ready to export as 3MF or STL for your slicer."""
 
 SETTINGS_HELP = """\
 Shape: the coaster's outline. Custom outline uses the largest closed shape in a DXF file drawn in mm.
@@ -64,7 +76,12 @@ Classical labyrinth: a single path to the centre with no dead ends. Seed and sty
 Wall thickness / Gap width: 1 mm each prints well with a 0.4 mm nozzle.
 Base thickness: the solid floor under the maze. Wall height: how far the walls stand above the floor. The coaster is base + wall height thick (2 + 2 = 4 mm by default). For walls in a second colour, add a filament change in your slicer at the base height.
 
-Save writes the ticked files. 3MF is the finished 3D model: open it in your slicer (PrusaSlicer, Bambu Studio, Orca, Cura…) and print. DXF is the flat drawing for Fusion 360. SVG is a picture, used by Open gallery.
+Save writes the ticked files:
+  3MF: the finished 3D model. Open it in your slicer (PrusaSlicer, Bambu Studio, OrcaSlicer, Cura…) and print.
+  STL: the same 3D model for programs that don't read 3MF.
+  STEP: an exact solid for CAD programs such as FreeCAD, Fusion and Onshape, to edit the coaster further (add a name, a logo, a recess…).
+  DXF: the flat 2D drawing, for CAD or laser-cutting programs.
+  SVG: a picture, shown by Open gallery.
 
 After each preview the checks line should be all ✓: every wall and gap is at least the set width \
 and the maze stays inside the border."""
@@ -76,29 +93,70 @@ def bundled(*parts):
 
 
 def documents_dir():
-    try:
-        buf = ctypes.create_unicode_buffer(260)
-        if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:  # CSIDL_PERSONAL
-            return Path(buf.value)
-    except (AttributeError, OSError):
-        pass
+    if WINDOWS:
+        try:
+            buf = ctypes.create_unicode_buffer(260)
+            if ctypes.windll.shell32.SHGetFolderPathW(None, 5, None, 0, buf) == 0:  # CSIDL_PERSONAL
+                return Path(buf.value)
+        except (AttributeError, OSError):
+            pass
+    elif not MAC:
+        try:  # Linux desktops can rename or move Documents; xdg-user-dir knows where it is
+            found = subprocess.run(["xdg-user-dir", "DOCUMENTS"], capture_output=True, text=True, timeout=5,
+                                   env=system_env())
+            if found.returncode == 0 and found.stdout.strip() and found.stdout.strip() != str(Path.home()):
+                return Path(found.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            pass
     return Path.home() / "Documents"
+
+
+def system_env():
+    """Environment for starting system programs from the packaged Linux app.
+
+    The packaged app points LD_LIBRARY_PATH at its own libraries, which can break
+    programs such as xdg-open; PyInstaller keeps the original in LD_LIBRARY_PATH_ORIG.
+    """
+    env = dict(os.environ)
+    if getattr(sys, "frozen", False) and not WINDOWS and not MAC:
+        if "LD_LIBRARY_PATH_ORIG" in env:
+            env["LD_LIBRARY_PATH"] = env.pop("LD_LIBRARY_PATH_ORIG")
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
+def open_path(path):
+    """Show a folder or open a file with the system's default program."""
+    if WINDOWS:
+        os.startfile(path)
+    else:
+        subprocess.Popen(["open" if MAC else "xdg-open", str(path)], env=system_env(),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        dpi = self.winfo_fpixels("1i") / 96
+        dpi = 1.0 if MAC else self.winfo_fpixels("1i") / 96  # macOS sizes windows in points already
         w = min(int(1120 * dpi), self.winfo_screenwidth() - 40)
         h = min(int(780 * dpi), self.winfo_screenheight() - int(110 * dpi))  # keep clear of the taskbar
         self.geometry(f"{w}x{h}+20+10")
         self.minsize(min(int(900 * dpi), w), min(int(640 * dpi), h))
-        try:
-            self.iconbitmap(default=str(bundled("assets", "app.ico")))
-        except tk.TclError:
-            pass
-        ttk.Style(self).configure("Big.TButton", font=("Segoe UI", 11, "bold"))
+        self.set_icon()
+
+        style = ttk.Style(self)
+        if not WINDOWS and not MAC and "clam" in style.theme_names():
+            style.theme_use("clam")  # Tk's plain Linux theme looks dated next to clam
+        base_font = tkfont.nametofont("TkDefaultFont").actual()
+        self.fonts = {
+            "body": tkfont.Font(self, family=base_font["family"], size=base_font["size"]),
+            "big": tkfont.Font(self, family=base_font["family"], size=abs(base_font["size"]) + 2),
+            "bold": tkfont.Font(self, family=base_font["family"], size=abs(base_font["size"]) + 1, weight="bold"),
+        }
+        style.configure("Big.TButton", font=self.fonts["bold"])
+        self.panel_bg = style.lookup("TFrame", "background") or self.cget("background")
 
         self.jobs = queue.Queue()
         self.busy = False
@@ -111,7 +169,7 @@ class App(tk.Tk):
             "center": CENTER_DEFAULT["theta"],
             "pattern": "theta", "algo": next(iter(ALGOS)), "bias": next(iter(BIASES)),
             "seed": str(random.randrange(10000)), "wall": "1.0", "gap": "1.0", "base": "2", "height": "2",
-            "save_3mf": "1", "save_dxf": "0", "save_svg": "1",
+            "save_3mf": "1", "save_stl": "0", "save_step": "0", "save_dxf": "0", "save_svg": "1",
             "out_dir": str(documents_dir() / APP_NAME),
         }
         self.v = {key: tk.StringVar(value=value) for key, value in defaults.items()}
@@ -120,38 +178,53 @@ class App(tk.Tk):
         self.build_menu()
         self.build_controls()
         self.build_preview()
+        # fonts and widgets differ in size between systems; grow the window to fit the controls
+        self.update_idletasks()
+        w = min(max(w, self.winfo_reqwidth()), self.winfo_screenwidth() - 40)
+        h = min(max(h, self.winfo_reqheight()), self.winfo_screenheight() - int(80 * dpi))
+        self.geometry(f"{w}x{h}+20+10")
+        self.minsize(min(self.winfo_reqwidth(), w), min(self.winfo_reqheight(), h))
         self.v["shape"].trace_add("write", self.shape_changed)
         self.v["pattern"].trace_add("write", self.pattern_changed)
         self.update_states()
         self.protocol("WM_DELETE_WINDOW", self.close)
-        self.bind("<Control-g>", lambda _e: self.generate())
-        self.bind("<Control-s>", lambda _e: self.save())
+        if MAC:
+            self.createcommand("tk::mac::Quit", self.close)  # Cmd+Q and the app menu's Quit
+        self.bind(f"<{SHORTCUT[0]}-g>", lambda _e: self.generate())
+        self.bind(f"<{SHORTCUT[0]}-s>", lambda _e: self.save())
+
+    def set_icon(self):
+        """Window icon from the files the build bundles; running from source simply has none."""
+        try:
+            if WINDOWS:
+                self.iconbitmap(default=str(bundled("assets", "app.ico")))
+            else:
+                self.icon_image = tk.PhotoImage(file=str(bundled("assets", "app.png")))
+                self.iconphoto(True, self.icon_image)
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------ layout
 
     def build_menu(self):
         bar = tk.Menu(self)
         file = tk.Menu(bar, tearoff=False)
-        file.add_command(label="Generate preview", accelerator="Ctrl+G", command=self.generate)
-        file.add_command(label="Save", accelerator="Ctrl+S", command=self.save)
+        file.add_command(label="Generate preview", accelerator=f"{SHORTCUT[1]}+G", command=self.generate)
+        file.add_command(label="Save", accelerator=f"{SHORTCUT[1]}+S", command=self.save)
         file.add_command(label="Save starter set (10 designs)", command=self.starter_set)
         file.add_separator()
         file.add_command(label="Open output folder", command=self.open_folder)
         file.add_command(label="Open gallery", command=self.open_gallery)
-        file.add_separator()
-        file.add_command(label="Exit", command=self.close)
+        if not MAC:  # macOS puts Quit in the app menu
+            file.add_separator()
+            file.add_command(label="Exit", command=self.close)
         bar.add_cascade(label="File", menu=file)
-
-        fusion = tk.Menu(bar, tearoff=False)
-        fusion.add_command(label="Add CoasterBuilder script to Fusion", command=self.install_fusion_script)
-        fusion.add_command(label="Remove CoasterBuilder script from Fusion", command=self.remove_fusion_script)
-        fusion.add_command(label="Show script folder", command=self.show_fusion_script)
-        fusion.add_separator()
-        fusion.add_command(label="How to build a coaster in Fusion", command=self.fusion_help)
-        bar.add_cascade(label="Fusion 360", menu=fusion)
 
         help_menu = tk.Menu(bar, tearoff=False)
         help_menu.add_command(label="What the settings do", command=lambda: self.info_box("Settings", SETTINGS_HELP))
+        help_menu.add_separator()
+        help_menu.add_command(label="Licence (GPL-3.0)", command=self.show_licence)
+        help_menu.add_command(label="Third-party licences", command=self.show_third_party)
         help_menu.add_command(label=f"About {APP_NAME}", command=self.about)
         bar.add_cascade(label="Help", menu=help_menu)
         self.config(menu=bar)
@@ -220,9 +293,11 @@ class App(tk.Tk):
         ttk.Button(f, text="Browse…", width=9, command=self.pick_out_dir).grid(row=0, column=2, padx=(4, 0))
         kinds = ttk.Frame(f)
         kinds.grid(row=1, column=0, columnspan=3, sticky="w", pady=(6, 0))
-        for fmt, label in (("3mf", "3MF (3D print)"), ("dxf", "DXF (Fusion 360)"), ("svg", "SVG (picture)")):
-            ttk.Checkbutton(kinds, text=label, variable=self.v[f"save_{fmt}"], onvalue="1", offvalue="0").pack(
-                side="left", padx=(0, 12))
+        for i, (fmt, label) in enumerate((("3mf", "3MF (3D print)"), ("stl", "STL (3D mesh)"),
+                                          ("step", "STEP (CAD)"), ("dxf", "DXF (2D drawing)"),
+                                          ("svg", "SVG (picture)"))):
+            ttk.Checkbutton(kinds, text=label, variable=self.v[f"save_{fmt}"], onvalue="1", offvalue="0").grid(
+                row=i // 3, column=i % 3, sticky="w", padx=(0, 10), pady=1)
 
         actions = ttk.Frame(side)
         actions.pack(fill="x")
@@ -246,10 +321,11 @@ class App(tk.Tk):
         self.canvas.grid(row=0, column=0, sticky="nsew")
         self.canvas.bind("<Configure>", self.schedule_redraw)
 
-        self.info = tk.Text(right, height=5, wrap="word", relief="flat", background="SystemButtonFace",
-                            font=("Segoe UI", 10), cursor="arrow")
+        self.info = tk.Text(right, height=5, wrap="word", relief="flat", borderwidth=0, highlightthickness=0,
+                            background=self.panel_bg, foreground="#2b2420", font=self.fonts["body"],
+                            cursor="arrow")
         self.info.grid(row=1, column=0, sticky="ew", pady=(8, 0))
-        self.info.tag_configure("title", font=("Segoe UI", 11, "bold"))
+        self.info.tag_configure("title", font=self.fonts["bold"])
         self.info.tag_configure("pass", foreground="#1f7a3a")
         self.info.tag_configure("fail", foreground="#b3261e")
         self.info.tag_configure("warning", foreground="#9a5b00")
@@ -309,7 +385,7 @@ class App(tk.Tk):
     def formats(self):
         chosen = [f for f in cg.FORMATS if self.v[f"save_{f}"].get() == "1"]
         if not chosen:
-            raise cg.CoasterError("Tick at least one file type to save: 3MF, DXF or SVG.")
+            raise cg.CoasterError("Tick at least one file type to save: 3MF, STL, STEP, DXF or SVG.")
         return chosen
 
     def design(self):
@@ -371,7 +447,8 @@ class App(tk.Tk):
         if (base, height) != (r.design.base, r.design.height):  # heights don't show in the preview
             r.design = replace(r.design, base=base, height=height)
             r.name = r.design.default_name()
-        existing = [f"{r.name}.{ext}" for ext in formats if (out / f"{r.name}.{ext}").exists()]
+        existing = [f"{r.name}.{cg.EXTENSIONS.get(f, f)}" for f in formats
+                    if (out / f"{r.name}.{cg.EXTENSIONS.get(f, f)}").exists()]
         if existing and not messagebox.askyesno(
                 APP_NAME, "Already in this folder:\n" + "\n".join(existing) + "\n\nReplace with this preview?"):
             return
@@ -516,7 +593,7 @@ class App(tk.Tk):
         w, h = c.winfo_width(), c.winfo_height()
         if not self.flat:
             c.create_text(w / 2, h / 2, text="Your coaster appears here.\nPick settings and click Generate preview.",
-                          fill="#8a7f74", font=("Segoe UI", 12), justify="center")
+                          fill="#8a7f74", font=self.fonts["big"], justify="center")
             return
         outline, channels = self.flat
         xs, ys = [p[0] for p in outline], [p[1] for p in outline]
@@ -550,48 +627,63 @@ class App(tk.Tk):
             messagebox.showerror(APP_NAME, str(e))
             return
         out.mkdir(parents=True, exist_ok=True)
-        os.startfile(out)
+        self.open_or_explain(out)
 
     def open_gallery(self):
         page = Path(self.v["out_dir"].get().strip()) / "index.html"
         if page.is_file():
-            os.startfile(page)
+            self.open_or_explain(page)
         else:
             messagebox.showinfo(APP_NAME, "There's no gallery in this folder yet. Save a coaster first.")
 
-    # ------------------------------------------------------------ Fusion script
+    def open_or_explain(self, path):
+        try:
+            open_path(path)
+        except OSError as e:
+            messagebox.showerror(APP_NAME, f"Couldn't open {path}:\n\n{e}")
 
-    def install_fusion_script(self):
-        if not FUSION_HOME.is_dir():
-            messagebox.showwarning(APP_NAME, f"Fusion 360 doesn't seem to be installed for this Windows user.\n"
-                                             f"(No folder at {FUSION_HOME})")
+    # ------------------------------------------------------------ licence and about
+
+    def show_licence(self):
+        self.text_window("Licence: GNU General Public License v3.0", "LICENSE")
+
+    def show_third_party(self):
+        self.text_window("Third-party licences", "THIRD_PARTY_LICENSES.txt",
+                         missing="This list is made when the app is built. Running from source, the app "
+                                 "uses the Python packages installed on your computer, under their own licences.")
+
+    def text_window(self, title, filename, missing=None):
+        path = bundled(filename)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            messagebox.showinfo(APP_NAME, missing or f"{filename} is missing. See {SOURCE_URL}")
             return
-        FUSION_SCRIPT_DIR.mkdir(parents=True, exist_ok=True)
-        for name in ("CoasterBuilder.py", "CoasterBuilder.manifest"):
-            shutil.copy2(bundled("fusion", "CoasterBuilder", name), FUSION_SCRIPT_DIR / name)
-        messagebox.showinfo(APP_NAME, "CoasterBuilder is now in Fusion 360's scripts folder.\n\n"
-                                      "In Fusion, press Shift+S and look under My Scripts. "
-                                      "Restart Fusion if it was open.")
-
-    def remove_fusion_script(self):
-        if not FUSION_SCRIPT_DIR.exists():
-            messagebox.showinfo(APP_NAME, "The CoasterBuilder script isn't in Fusion's scripts folder.")
-            return
-        shutil.rmtree(FUSION_SCRIPT_DIR, ignore_errors=True)
-        messagebox.showinfo(APP_NAME, "Removed the CoasterBuilder script from Fusion 360.")
-
-    def show_fusion_script(self):
-        folder = FUSION_SCRIPT_DIR if FUSION_SCRIPT_DIR.exists() else bundled("fusion", "CoasterBuilder")
-        os.startfile(folder)
-
-    def fusion_help(self):
-        self.info_box("Build a coaster in Fusion 360", FUSION_STEPS)
+        box = tk.Toplevel(self)
+        box.title(title)
+        box.transient(self)
+        box.geometry(f"{min(760, self.winfo_screenwidth() - 80)}x{min(640, self.winfo_screenheight() - 120)}")
+        frame = ttk.Frame(box, padding=8)
+        frame.pack(fill="both", expand=True)
+        view = tk.Text(frame, wrap="word", font=tkfont.nametofont("TkFixedFont"), padx=8, pady=8)
+        bar = ttk.Scrollbar(frame, command=view.yview)
+        view.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        view.pack(side="left", fill="both", expand=True)
+        view.insert("1.0", text)
+        view.configure(state="disabled")
+        ttk.Button(box, text="Close", command=box.destroy).pack(pady=(0, 8))
+        box.bind("<Escape>", lambda _e: box.destroy())
 
     def about(self):
         messagebox.showinfo(f"About {APP_NAME}",
-                            f"{APP_NAME} {APP_VERSION}\n\n"
+                            f"{APP_NAME} {APP_VERSION}\n{COPYRIGHT}\n\n"
                             "Circular-maze coasters with customisable wall and gap widths, saved as 3MF "
-                            "for 3D printing or DXF for Fusion 360.\n\n"
+                            "for 3D printing.\n\n"
+                            "This program is free software under the GNU General Public License, version 3 "
+                            "or later: you can share and change it under its terms. It comes with ABSOLUTELY "
+                            "NO WARRANTY. See Help → Licence for the full text.\n\n"
+                            f"Source code: {SOURCE_URL}\n\n"
                             f"Settings are kept in:\n{SETTINGS_FILE.parent}")
 
     def info_box(self, title, text):
@@ -636,14 +728,15 @@ class App(tk.Tk):
 
 
 def main():
-    # hidden check used by build.ps1: builds one coaster without opening a window
+    # hidden check used by tools/build.py: builds and saves one coaster without opening a window
     if len(sys.argv) == 3 and sys.argv[1] == "--selftest":
-        result = cg.save(cg.build(cg.Design(shape="hexagon", seed=1)), Path(sys.argv[2]))
+        result = cg.save(cg.build(cg.Design(shape="hexagon", seed=1)), Path(sys.argv[2]), cg.FORMATS)
         sys.exit(0 if result.ok else 1)
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
-    except (AttributeError, OSError):
-        pass
+    if WINDOWS:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
+        except (AttributeError, OSError):
+            pass
     App().mainloop()
 
 

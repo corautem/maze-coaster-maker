@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Circular-maze coaster generator: 3MF for printing, DXF for Fusion 360.
+# Maze Coaster Maker: circular-maze coasters for 3D printing.
+# Copyright (C) 2026 corautem
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This program is free software: you can redistribute it and/or modify it under the terms of the
+# GNU General Public License as published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version. It is distributed WITHOUT ANY WARRANTY; see the
+# LICENSE file for details.
+"""Circular-maze coaster generator: 3MF for printing, DXF and SVG drawings.
 
 Each coaster can be written as:
   <name>.3mf  the finished 3D model (solid base, maze walls on top), ready for a slicer
-  <name>.dxf  2D sketch in mm with two layers, OUTLINE (the coaster's edge) and
+  <name>.dxf  2D drawing in mm with two layers, OUTLINE (the coaster's edge) and
               CHANNELS (closed loops around the gaps between the walls)
   <name>.svg  a picture of the design; output/index.html shows them all
-Everything inside OUTLINE that is not a channel is wall or rim, so in Fusion
-you extrude the outline to full height and cut the channels down to the floor
-(fusion/CoasterBuilder does exactly that).
+Everything inside OUTLINE that is not a channel is wall or rim, so in a CAD program
+you extrude the outline to full height and cut the channels down to the floor.
 
     python coaster_gen.py --examples
     python coaster_gen.py --shape hexagon --pattern theta --seed 42
@@ -17,11 +24,14 @@ you extrude the outline to full height and cut the channels down to the floor
 from __future__ import annotations
 
 import argparse
+import bisect
 import html
 import math
 import random
+import struct
 import zipfile
 from collections import Counter
+from datetime import datetime
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -540,7 +550,7 @@ def ring_to_loop(coords, tol=1e-3):
             loop.append((*p, math.tan(total / pieces / 4)))
         i = j
 
-    # arcs that bow less than 1 um are lines to any printer, and Fusion rejects them as arcs
+    # arcs that bow less than 1 um are lines to any printer, and some CAD programs reject them as arcs
     for i, (x0, y0, b) in enumerate(loop):
         x1, y1, _ = loop[(i + 1) % len(loop)]
         if b and abs(b) * math.hypot(x1 - x0, y1 - y0) / 2 < MIN_SAGITTA:
@@ -710,6 +720,410 @@ def write_3mf(path: Path, name: str, verts, tris):
         z.writestr("3D/3dmodel.model", "\n".join(model))
 
 
+def write_stl(path: Path, name: str, verts, tris):
+    """Binary STL: the same mesh as the 3MF, for programs that only read STL."""
+    header = f"Maze Coaster Maker: {name}".encode("ascii", "replace")[:80].ljust(80, b" ")
+    with open(path, "wb") as f:
+        f.write(header + struct.pack("<I", len(tris)))
+        for a, b, c in tris:
+            (ax, ay, az), (bx, by, bz), (cx, cy, cz) = verts[a], verts[b], verts[c]
+            ux, uy, uz, vx, vy, vz = bx - ax, by - ay, bz - az, cx - ax, cy - ay, cz - az
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            length = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+            f.write(struct.pack("<12fH", nx / length, ny / length, nz / length,
+                                ax, ay, az, bx, by, bz, cx, cy, cz, 0))
+
+
+# ---------------------------------------------------------------- CAD solid (STEP)
+
+STEP_FACE_EDGES = 250  # aim for flat faces with at most about this many boundary edges; CAD
+                       # programs take far longer to open faces with thousands of edges
+
+
+class SplitFailed(Exception):
+    """Cutting the flat faces into strips didn't work out; the export falls back to whole faces."""
+
+
+def oriented_loop(loop, ccw):
+    """A closed (x, y, bulge) loop turned to run counter-clockwise (ccw=True) or clockwise."""
+    pts = flatten_loop(loop)
+    area2 = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))
+    if (area2 > 0) == ccw:
+        return list(loop)
+    n = len(loop)  # walking backwards, each segment keeps its arc but bends the other way
+    return [(loop[-k % n][0], loop[-k % n][1], -loop[(-k - 1) % n][2]) for k in range(n)]
+
+
+def step_cuts(loops):
+    """x positions of upright cutting lines that split the big flat faces into strips.
+
+    Each line stays at least 1 µm clear of every corner and every arc's turning point, so
+    it crosses edges cleanly.
+    """
+    edges = sum(len(loop) for loop in loops)
+    strips = edges // STEP_FACE_EDGES
+    if not strips:
+        return []
+    xs = sorted(x for loop in loops for x, _, _ in loop)
+    arcs = set()
+    for loop in loops:
+        for i, (x0, y0, b) in enumerate(loop):
+            if b:
+                x1, y1, _ = loop[(i + 1) % len(loop)]
+                (cx, _), r, _, _ = bulge_arc((x0, y0), (x1, y1), b)
+                arcs.add((round(cx, 6), round(r, 6)))
+
+    def clear(c):
+        i = bisect.bisect_left(xs, c)
+        near = xs[max(0, i - 1):i + 1]
+        return all(abs(x - c) > 1e-3 for x in near) and all(abs(abs(c - cx) - r) > 1e-3 for cx, r in arcs)
+
+    cuts = []
+    for j in range(1, strips + 1):
+        c = xs[0] + (xs[-1] - xs[0]) * j / (strips + 1) + 0.0137
+        for _ in range(500):
+            if clear(c):
+                cuts.append(c)
+                break
+            c += 0.0173
+    return cuts
+
+
+def arc_mid_angle(a, b, centre, ccw):
+    ta = math.atan2(a[1] - centre[1], a[0] - centre[0])
+    tb = math.atan2(b[1] - centre[1], b[0] - centre[0])
+    sweep = (tb - ta) % (2 * math.pi) if ccw else -((ta - tb) % (2 * math.pi))
+    return ta, sweep
+
+
+def split_loop(loop, cuts):
+    """Pieces of a loop's edges between the cutting lines.
+
+    Returns one list per edge of (a, b, arc) pieces, arc = (centre, r, ccw) or None.
+    Points where a cutting line crosses an edge get x exactly equal to that line.
+    """
+    out = []
+    n = len(loop)
+    for i, (x0, y0, b) in enumerate(loop):
+        x1, y1, _ = loop[(i + 1) % n]
+        hits = []
+        if b:
+            (cx, cy), r, a0, sweep = bulge_arc((x0, y0), (x1, y1), b)
+            arc = ((cx, cy), r, sweep > 0)
+            for c in cuts:
+                if abs(c - cx) < r:
+                    dy = math.sqrt(r * r - (c - cx) ** 2)
+                    for y in (cy - dy, cy + dy):
+                        turn = (math.atan2(y - cy, c - cx) - a0) * (1 if sweep > 0 else -1)
+                        t = (turn % (2 * math.pi)) / abs(sweep)
+                        if 1e-9 < t < 1 - 1e-9:
+                            hits.append((t, (c, y)))
+        else:
+            arc = None
+            for c in cuts:
+                if (x0 - c) * (x1 - c) < 0:
+                    t = (c - x0) / (x1 - x0)
+                    hits.append((t, (c, y0 + t * (y1 - y0))))
+        pts = [(x0, y0)] + [p for _, p in sorted(hits)] + [(x1, y1)]
+        out.append([(pts[j], pts[j + 1], arc) for j in range(len(pts) - 1)])
+    return out
+
+
+def piece_mid_x(piece):
+    a, b, arc = piece
+    if arc is None:
+        return (a[0] + b[0]) / 2
+    centre, r, ccw = arc
+    ta, sweep = arc_mid_angle(a, b, centre, ccw)
+    return centre[0] + r * math.cos(ta + sweep / 2)
+
+
+def trace_faces(pieces, steps, cuts):
+    """Flat faces left over when the cutting lines split a region.
+
+    pieces: all (a, b, arc) pieces; steps: (piece index, forward) pairs that run around the
+    region with it on their left. Returns closed walks of ("piece", index, forward) and
+    ("cut", from point, to point) steps.
+    """
+    on_cut = set(cuts)
+    leaving, from_left = {}, {}
+    for k, forward in steps:
+        a, b, _ = pieces[k]
+        start, end = (a, b) if forward else (b, a)
+        if start in leaving:
+            raise SplitFailed
+        leaving[start] = (k, forward)
+        if end[0] in on_cut:
+            from_left[end] = piece_mid_x(pieces[k]) < end[0]
+
+    # Walking up a cutting line, the region starts at a crossing that comes from the left and
+    # ends at one that comes from the right; those two points bound one cut segment.
+    partner = {}
+    lines = {}
+    for p, left in from_left.items():
+        lines.setdefault(p[0], []).append((p[1], left, p))
+    for crossings in lines.values():
+        crossings.sort()
+        if len(crossings) % 2:
+            raise SplitFailed
+        for (_, left0, p0), (_, left1, p1) in zip(crossings[0::2], crossings[1::2]):
+            if not left0 or left1:
+                raise SplitFailed
+            partner[p0], partner[p1] = p1, p0
+
+    walks, used = [], set()
+    for first in steps:
+        if first in used:
+            continue
+        walk, step = [], first
+        while step not in used:
+            used.add(step)
+            walk.append(("piece",) + step)
+            a, b, _ = pieces[step[0]]
+            end = b if step[1] else a
+            if end in partner:
+                walk.append(("cut", end, partner[end]))
+                end = partner[end]
+            step = leaving.get(end)
+            if step is None:
+                raise SplitFailed
+        if step != first:
+            raise SplitFailed
+        walks.append(walk)
+    return walks
+
+
+def walk_polygon(pieces, walk):
+    pts = []
+    for step in walk:
+        if step[0] == "cut":
+            pts.append(step[1])
+            continue
+        a, b, arc = pieces[step[1]]
+        a, b = (a, b) if step[2] else (b, a)
+        pts.append(a)
+        if arc:
+            centre, r, ccw = arc
+            ta, sweep = arc_mid_angle(a, b, centre, ccw == step[2])
+            n = max(2, math.ceil(abs(sweep) / ARC_STEP))
+            pts += [(centre[0] + r * math.cos(ta + sweep * j / n), centre[1] + r * math.sin(ta + sweep * j / n))
+                    for j in range(1, n)]
+    return pts
+
+
+def group_faces(pieces, walks):
+    """Pair each hole (a clockwise walk) with the counter-clockwise walk around it."""
+    outers, holes = [], []
+    for walk in walks:
+        pts = walk_polygon(pieces, walk)
+        signed = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))
+        (outers if signed > 0 else holes).append((walk, Polygon(pts)))
+    faces = [[walk] for walk, _ in outers]
+    for walk, poly in holes:
+        inside = [(o.area, i) for i, (_, o) in enumerate(outers) if o.contains(poly.representative_point())]
+        if not inside:
+            raise SplitFailed
+        faces[min(inside)[1]].append(walk)
+    return faces
+
+
+def step_real(x):
+    text = f"{x:.9f}".rstrip("0")  # STEP reals need the decimal point: 2. not 2
+    return "0." if text in ("0.", "-0.") else text
+
+
+def step_string(text):
+    return "'" + "".join(c if " " <= c <= "~" else "_" for c in text).replace("'", "''") + "'"
+
+
+class StepWriter:
+    """Writes the coaster as a STEP (ISO 10303-21, AP214) solid that CAD programs open as a body.
+
+    Every face is flat (plane) or part of an upright cylinder, and every edge a line or
+    circular arc, so the solid is exact: no mesh, nothing approximated.
+    """
+
+    def __init__(self):
+        self.items = []
+        self.cache = {}
+        self.uses = Counter()  # (edge, forward) -> times used, for the closed-shell check
+
+    def add(self, entity):
+        self.items.append(entity)
+        return f"#{len(self.items)}"
+
+    def once(self, key, make):
+        if key not in self.cache:
+            self.cache[key] = make()
+        return self.cache[key]
+
+    def point(self, x, y, z):
+        return self.once(("p", x, y, z),
+                         lambda: self.add(f"CARTESIAN_POINT('',({step_real(x)},{step_real(y)},{step_real(z)}))"))
+
+    def direction(self, x, y, z):
+        return self.once(("d", x, y, z),
+                         lambda: self.add(f"DIRECTION('',({step_real(x)},{step_real(y)},{step_real(z)}))"))
+
+    def placement(self, origin, axis, ref):
+        return self.add(f"AXIS2_PLACEMENT_3D('',{self.point(*origin)},{self.direction(*axis)},"
+                        f"{self.direction(*ref)})")
+
+    def vertex(self, x, y, z):
+        return self.once(("v", x, y, z), lambda: self.add(f"VERTEX_POINT('',{self.point(x, y, z)})"))
+
+    def line_edge(self, a, b):
+        d = [q - p for p, q in zip(a, b)]
+        length = math.sqrt(sum(c * c for c in d))
+        vector = self.add(f"VECTOR('',{self.direction(*(c / length for c in d))},{step_real(length)})")
+        line = self.add(f"LINE('',{self.point(*a)},{vector})")
+        return self.add(f"EDGE_CURVE('',{self.vertex(*a)},{self.vertex(*b)},{line},.T.)")
+
+    def piece_edge(self, pieces, k, z):
+        def make():
+            (ax, ay), (bx, by), arc = pieces[k]
+            if arc is None:
+                return self.line_edge((ax, ay, z), (bx, by, z))
+            (cx, cy), r, ccw = arc
+            # a circle runs counter-clockwise around its axis, so clockwise arcs get the axis pointing down
+            circle = self.add(f"CIRCLE('',{self.placement((cx, cy, z), (0, 0, 1 if ccw else -1), (1, 0, 0))},"
+                              f"{step_real(r)})")
+            return self.add(f"EDGE_CURVE('',{self.vertex(ax, ay, z)},{self.vertex(bx, by, z)},{circle},.T.)")
+        return self.once(("e", k, z), make)
+
+    def cut_edge(self, p, q, z):
+        lower, upper = sorted((p, q), key=lambda pt: pt[1])
+        edge = self.once(("c", lower, upper, z), lambda: self.line_edge((*lower, z), (*upper, z)))
+        return edge, p == lower
+
+    def face(self, bounds, surface, same_sense=True):
+        """bounds: loops of (edge, forward); the first is the outer boundary."""
+        refs = []
+        for i, loop in enumerate(bounds):
+            oriented = []
+            for edge, forward in loop:
+                self.uses[edge, forward] += 1
+                oriented.append(self.add(f"ORIENTED_EDGE('',*,*,{edge},{'.T.' if forward else '.F.'})"))
+            edge_loop = self.add(f"EDGE_LOOP('',({','.join(oriented)}))")
+            refs.append(self.add(f"{'FACE_OUTER_BOUND' if i == 0 else 'FACE_BOUND'}('',{edge_loop},.T.)"))
+        return self.add(f"ADVANCED_FACE('',({','.join(refs)}),{surface},{'.T.' if same_sense else '.F.'})")
+
+    def plane(self, z, up):
+        return self.add(f"PLANE('',{self.placement((0, 0, z), (0, 0, 1 if up else -1), (1, 0, 0))})")
+
+    def flat_faces(self, pieces, faces, z, up):
+        out = []
+        for walks in faces:
+            bounds = [[(self.piece_edge(pieces, s[1], z), s[2]) if s[0] == "piece" else self.cut_edge(s[1], s[2], z)
+                       for s in walk] for walk in walks]
+            out.append(self.face(bounds, self.plane(z, up)))
+        return out
+
+    def walls(self, loop, edge_pieces, pieces, z0, z1):
+        """Upright faces along a loop that has material on its left, facing out of the material."""
+        n = len(loop)
+        upright = [self.line_edge((x, y, z0), (x, y, z1)) for x, y, _ in loop]
+        faces = []
+        for i, (x0, y0, b) in enumerate(loop):
+            x1, y1, _ = loop[(i + 1) % n]
+            ks = edge_pieces[i]
+            bound = ([(self.piece_edge(pieces, k, z0), True) for k in ks] + [(upright[(i + 1) % n], True)]
+                     + [(self.piece_edge(pieces, k, z1), False) for k in reversed(ks)] + [(upright[i], False)])
+            if b:
+                (cx, cy), r, _, _ = bulge_arc((x0, y0), (x1, y1), b)
+                surface = self.add(f"CYLINDRICAL_SURFACE('',{self.placement((cx, cy, z0), (0, 0, 1), (1, 0, 0))},"
+                                   f"{step_real(r)})")
+                faces.append(self.face([bound], surface, same_sense=b > 0))  # outward = away from the axis
+            else:
+                length = math.hypot(x1 - x0, y1 - y0)
+                dx, dy = (x1 - x0) / length, (y1 - y0) / length
+                surface = self.add(f"PLANE('',{self.placement((x0, y0, z0), (dy, -dx, 0), (dx, dy, 0))})")
+                faces.append(self.face([bound], surface))
+        return faces
+
+
+def step_solid(outer, channels, base, height, cuts):
+    """The coaster's faces in a StepWriter; raises SplitFailed if the cutting lines can't be used."""
+    top = base + height
+    s = StepWriter()
+    pieces, per_loop = [], []
+    for loop in [outer] + channels:
+        per_edge = []
+        for edge in split_loop(loop, cuts):
+            per_edge.append(list(range(len(pieces), len(pieces) + len(edge))))
+            pieces += edge
+        per_loop.append(per_edge)
+
+    def steps(loop_index, forward):
+        ks = [k for edge in per_loop[loop_index] for k in edge]
+        return [(k, True) for k in ks] if forward else [(k, False) for k in reversed(ks)]
+
+    top_steps = steps(0, True) + [st for i in range(1, len(per_loop)) for st in steps(i, True)]
+    floor_steps = [st for i in range(1, len(per_loop)) for st in steps(i, False)]
+    top_faces = group_faces(pieces, trace_faces(pieces, top_steps, cuts))
+    floor_faces = group_faces(pieces, trace_faces(pieces, floor_steps, cuts))
+
+    faces = [s.face([[(s.piece_edge(pieces, k, 0.0), False) for k, _ in steps(0, False)]], s.plane(0.0, up=False))]
+    faces += s.walls(outer, per_loop[0], pieces, 0.0, top)
+    for i, loop in enumerate(channels, start=1):
+        faces += s.walls(loop, per_loop[i], pieces, base, top)
+    faces += s.flat_faces(pieces, floor_faces, base, up=True)
+    faces += s.flat_faces(pieces, top_faces, top, up=True)
+
+    if any(s.uses[e, True] != 1 or s.uses[e, False] != 1 for e, _ in s.uses):
+        raise SplitFailed
+    return s, faces
+
+
+def write_step(path: Path, name: str, outline: Outline, loops, base: float, height: float):
+    """The coaster as an exact CAD solid: floor from z = 0 to base, walls up to base + height.
+
+    Coordinates match the DXF (coaster centred on the origin). Raises CoasterError if the
+    faces don't close up into one solid.
+    """
+    outer = oriented_loop(outline.loop, ccw=True)                     # material on its left
+    channels = [oriented_loop(loop, ccw=False) for loop in loops]     # material (walls) on their left
+    try:
+        s, faces = step_solid(outer, channels, base, height, step_cuts([outer] + channels))
+    except SplitFailed:
+        try:  # whole faces: slower to open in CAD programs, but the same solid
+            s, faces = step_solid(outer, channels, base, height, [])
+        except SplitFailed:
+            raise CoasterError("The STEP solid didn't close up, so it wasn't saved. Try another seed.") from None
+
+    shell = s.add(f"CLOSED_SHELL('',({','.join(faces)}))")
+    brep = s.add(f"MANIFOLD_SOLID_BREP({step_string(name)},{shell})")
+    mm = s.add("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )")
+    rad = s.add("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )")
+    sr = s.add("( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() )")
+    tol = s.add(f"UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),{mm},'distance_accuracy_value',"
+                "'confusion accuracy')")
+    context = s.add(f"( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT(({tol})) "
+                    f"GLOBAL_UNIT_ASSIGNED_CONTEXT(({mm},{rad},{sr})) "
+                    "REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') )")
+    rep = s.add(f"ADVANCED_BREP_SHAPE_REPRESENTATION({step_string(name)},"
+                f"({s.placement((0, 0, 0), (0, 0, 1), (1, 0, 0))},{brep}),{context})")
+    app = s.add("APPLICATION_CONTEXT('core data for automotive mechanical design processes')")
+    s.add(f"APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,{app})")
+    product_context = s.add(f"PRODUCT_CONTEXT('',{app},'mechanical')")
+    product = s.add(f"PRODUCT({step_string(name)},{step_string(name)},'',({product_context}))")
+    s.add(f"PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,({product}))")
+    formation = s.add(f"PRODUCT_DEFINITION_FORMATION('','',{product})")
+    definition_context = s.add(f"PRODUCT_DEFINITION_CONTEXT('part definition',{app},'design')")
+    definition = s.add(f"PRODUCT_DEFINITION('design','',{formation},{definition_context})")
+    shape = s.add(f"PRODUCT_DEFINITION_SHAPE('','',{definition})")
+    s.add(f"SHAPE_DEFINITION_REPRESENTATION({shape},{rep})")
+
+    stamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    lines = ["ISO-10303-21;", "HEADER;",
+             f"FILE_DESCRIPTION(({step_string('Maze coaster ' + name)}),'2;1');",
+             f"FILE_NAME({step_string(path.name)},'{stamp}',(''),(''),'Maze Coaster Maker','Maze Coaster Maker','');",
+             "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));", "ENDSEC;", "DATA;"]
+    lines += [f"#{i}={item};" for i, item in enumerate(s.items, start=1)]
+    lines += ["ENDSEC;", "END-ISO-10303-21;", ""]
+    path.write_text("\n".join(lines), encoding="ascii")
+
+
 # ---------------------------------------------------------------- checks
 
 def run_checks(outline_poly, play, channels, d: Design):
@@ -745,13 +1159,11 @@ class Result:
     bounds: tuple             # outline bounding box, for the SVG view
     design: Design | None = None
     notes: list = field(default_factory=list)  # (level, text) with level "warning" or "note"
-    model_path: Path | None = None  # the paths are set by save()
-    dxf_path: Path | None = None
-    svg_path: Path | None = None
+    paths: dict = field(default_factory=dict)  # format -> file, set by save()
 
     @property
     def files(self) -> list:
-        return [p for p in (self.model_path, self.dxf_path, self.svg_path) if p]
+        return [self.paths[f] for f in FORMATS if f in self.paths]
 
     @property
     def ok(self) -> bool:
@@ -786,30 +1198,38 @@ def build(d: Design, checks=True) -> Result:
                   design=d, notes=centre_notes(d, stats["centre_d"], smallest))
 
 
-FORMATS = ("3mf", "dxf", "svg")
+FORMATS = ("3mf", "stl", "step", "dxf", "svg")
+DEFAULT_FORMATS = ("3mf", "dxf", "svg")
+EXTENSIONS = {"step": "step"}  # file extension per format where it differs from the format name
 
 
-def save(r: Result, out_dir: Path, formats=FORMATS) -> Result:
-    """Write r into out_dir as any of: 3MF (3D print), DXF (Fusion 360), SVG (picture)."""
+def save(r: Result, out_dir: Path, formats=DEFAULT_FORMATS) -> Result:
+    """Write r into out_dir in the given formats:
+    3MF (3D print), STL (mesh), STEP (CAD solid), DXF (2D drawing), SVG (picture)."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    r.model_path = r.dxf_path = r.svg_path = None  # record only what this call writes
-    if "3mf" in formats:  # first, so a failed model leaves nothing half-written
-        verts, tris = make_mesh(r.outline, r.loops, r.design.base, r.design.height)
+    r.paths = {}  # record only what this call writes
+    d = r.design
+    path = {f: out_dir / f"{r.name}.{EXTENSIONS.get(f, f)}" for f in FORMATS}
+    if "3mf" in formats or "stl" in formats:  # first, so a failed model leaves nothing half-written
+        verts, tris = make_mesh(r.outline, r.loops, d.base, d.height)
         if not mesh_is_closed(tris):
             raise CoasterError("The 3D model came out with a hole in it, so nothing was saved. Try another seed.")
-        r.model_path = out_dir / f"{r.name}.3mf"
-        write_3mf(r.model_path, r.name, verts, tris)
+        if "3mf" in formats:
+            write_3mf(path["3mf"], r.name, verts, tris)
+        if "stl" in formats:
+            write_stl(path["stl"], r.name, verts, tris)
+    if "step" in formats:
+        write_step(path["step"], r.name, r.outline, r.loops, d.base, d.height)
     if "dxf" in formats:
-        r.dxf_path = out_dir / f"{r.name}.dxf"
-        make_dxf(r.outline, r.loops).saveas(r.dxf_path)
+        make_dxf(r.outline, r.loops).saveas(path["dxf"])
     if "svg" in formats:
-        r.svg_path = out_dir / f"{r.name}.svg"
-        write_svg(r.svg_path, r.outline, r.loops, r.bounds)
+        write_svg(path["svg"], r.outline, r.loops, r.bounds)
+    r.paths = {f: path[f] for f in FORMATS if f in formats}
     return r
 
 
-def generate(d: Design, out_dir: Path, checks=True) -> bool:
-    r = save(build(d, checks), out_dir)
+def generate(d: Design, out_dir: Path, checks=True, formats=DEFAULT_FORMATS) -> bool:
+    r = save(build(d, checks), out_dir, formats)
     print(f"{r.summary()} -> {', '.join(p.name for p in r.files)}")
     if r.checks:
         print("   " + " | ".join(f"{'PASS' if ok else 'FAIL'} {label}" for label, ok in r.checks))
@@ -867,7 +1287,7 @@ a {{ color: inherit; }}
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Generate circular-maze coaster DXFs for Fusion 360.")
+    ap = argparse.ArgumentParser(description="Generate circular-maze coasters for 3D printing and CAD.")
     ap.add_argument("--examples", action="store_true", help="write the starter set of designs")
     ap.add_argument("--shape", choices=SHAPES, default="circle")
     ap.add_argument("--outline", dest="outline_file", help="closed outline DXF in mm (replaces --shape)")
@@ -876,9 +1296,9 @@ def main(argv=None):
     ap.add_argument("--rim", type=float, default=3.0, help="solid border in mm (default 3)")
     ap.add_argument("--wall", type=float, default=1.0, help="wall thickness in mm (default 1)")
     ap.add_argument("--gap", type=float, default=1.0, help="channel width in mm (default 1)")
-    ap.add_argument("--base", type=float, default=2.0, help="3MF: solid floor thickness in mm (default 2)")
+    ap.add_argument("--base", type=float, default=2.0, help="solid floor thickness in mm (default 2)")
     ap.add_argument("--wall-height", dest="height", type=float, default=2.0,
-                    help="3MF: wall height above the floor in mm (default 2)")
+                    help="wall height above the floor in mm (default 2)")
     ap.add_argument("--corner-r", type=float, help="corner radius for hexagon/octagon/rounded-square")
     ap.add_argument("--petals", type=int, default=6, help="petal count for flower (default 6)")
     ap.add_argument("--seed", type=int, help="random seed for theta mazes (default: random)")
@@ -891,18 +1311,26 @@ def main(argv=None):
     ap.add_argument("--cell-length", type=float, help="theta minimum cell length in mm (bigger = coarser)")
     ap.add_argument("--name", help="output file name (without extension)")
     ap.add_argument("--out", default="output", help="output folder (default: output)")
+    ap.add_argument("--formats", default=",".join(DEFAULT_FORMATS),
+                    help=f"files to write, comma-separated, from {','.join(FORMATS)} "
+                         f"(default {','.join(DEFAULT_FORMATS)}); step opens as a solid in CAD programs")
     ap.add_argument("--skip-checks", action="store_true", help="skip the wall/gap checks (faster)")
     args = vars(ap.parse_args(argv))
 
     out_dir = Path(args.pop("out"))
     examples, checks = args.pop("examples"), not args.pop("skip_checks")
+    formats = [f.strip().lower() for f in args.pop("formats").split(",") if f.strip()]
+    unknown = [f for f in formats if f not in FORMATS]
+    if unknown or not formats:
+        ap.error(f"--formats takes a comma-separated list from: {', '.join(FORMATS)}")
     designs = EXAMPLES if examples else [Design(**args)]
     try:
-        ok = all([generate(d, out_dir, checks) for d in designs])
+        ok = all([generate(d, out_dir, checks, formats) for d in designs])
     except CoasterError as e:
         raise SystemExit(str(e))
-    write_gallery(out_dir)
-    print(f"gallery: {out_dir / 'index.html'}")
+    if "svg" in formats:
+        write_gallery(out_dir)
+        print(f"gallery: {out_dir / 'index.html'}")
     if not ok:
         raise SystemExit("some checks FAILED")
 
