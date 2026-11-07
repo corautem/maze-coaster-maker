@@ -1,41 +1,44 @@
-# Maze Coaster Maker
+# ![Maze Coaster Maker icon](docs/images/icon-128.png) Maze Coaster Maker
 
-A small app for Windows, macOS and Linux that makes 3D-printable coasters with a circular maze, with **customisable wall and gap widths** (1 mm each by default). It saves a **3MF** file you open straight in your slicer, and can also save STL, a STEP solid for CAD programs, a DXF drawing and an SVG picture.
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/corautem) [![Sponsor me on GitHub](docs/images/github-sponsors.svg)](https://github.com/sponsors/corautem)
 
-## Download
+A desktop app for Windows, macOS and Linux that makes coasters with a circular maze for 3D printing. Pick a shape and a pattern, preview the maze, and save a 3MF file that opens straight in your slicer.
 
-Get the file for your computer from the [Releases page](https://github.com/corautem/maze-coaster-maker/releases). Nothing to install, and you don't need Python.
+![Making a coaster: picking the hexagon shape, generating a preview, trying a new maze, switching to a classical labyrinth, then ticking STEP and saving](docs/images/making-a-coaster.gif)
 
-| Computer | File | First run |
+## Features
+
+- **Random mazes or a classical labyrinth:** a new random maze for every seed, or the traditional single path to the centre.
+- **Six outlines:** circle, hexagon, octagon, rounded square, flower with 3 to 24 petals, or your own outline from a DXF file.
+- **Every size adjustable:** coaster size, border, centre, wall thickness, gap width, base thickness and wall height, in millimetres.
+- **Checked before you print:** each preview tests that every wall and gap is at least the width you set and that the maze stays inside the border.
+- **Files for printing and CAD:** 3MF and STL for slicers, STEP as an editable solid for FreeCAD, Fusion or Onshape, DXF as a 2D drawing, and SVG as a picture.
+
+It started as a way to make maze coasters with exact 1 mm walls and gaps without drawing each maze by hand in CAD. Version 2.0.0 is the first public release.
+
+## Shapes and patterns
+
+![Six coasters: a circle, a hexagon, an octagon, a rounded square and a five-petal flower with random mazes, and a circle with a classical labyrinth](docs/images/shapes-and-patterns.png)
+
+| Setting | Choices |
+|---|---|
+| Shape | Circle, hexagon, octagon, rounded square, flower, or a custom outline |
+| Pattern | Random maze, or classical labyrinth |
+| Corridors (random maze) | Long winding corridors, or bushy with many short dead ends |
+| Direction (random maze) | Balanced, around the rings, or outward |
+
+## Installing
+
+Download the file for your computer from the [Releases page](https://github.com/corautem/maze-coaster-maker/releases):
+
+| Computer | File | First start |
 |---|---|---|
-| Windows | `…-windows-x64.exe` | Double-click it. If Windows shows "Windows protected your PC", click **More info → Run anyway** (the app isn't code-signed). |
-| Mac, Apple silicon or Intel | `…-macos-arm64.zip` or `…-macos-x64.zip` | Unzip and drag **Maze Coaster Maker** into Applications. The first time, macOS blocks it because it isn't signed by Apple: open it, close the message, then click **Open Anyway** in **System Settings → Privacy & Security**. |
-| Linux, x64 or ARM (such as a 64-bit Raspberry Pi) | `…-linux-x64.tar.gz` or `…-linux-arm64.tar.gz` | Unpack it and run `MazeCoasterMaker`. Needs glibc 2.35 or newer: Ubuntu 22.04, Debian 12, Fedora 36 and later. |
+| Windows | `…-windows-x64.exe` | Double-click it. If Windows shows "Windows protected your PC", click **More info**, then **Run anyway**. |
+| Mac with Apple silicon or Intel | `…-macos-arm64.zip` or `…-macos-x64.zip` | Unzip it and drag **Maze Coaster Maker** into Applications. If macOS blocks it, open **System Settings → Privacy & Security** and click **Open Anyway**. |
+| Linux, x64 or ARM | `…-linux-x64.tar.gz` or `…-linux-arm64.tar.gz` | Unpack it and run `MazeCoasterMaker`. |
 
-## Use the app
-
-1. Pick a **shape**, **size**, **border** and **centre diameter**.
-2. Pick a **pattern**: *Random maze* (a new maze for every seed) or *Classical labyrinth* (one path to the centre).
-3. Set **wall thickness**, **gap width**, **base thickness** (the solid floor) and **wall height** (above the floor). The coaster is base + wall height thick: 2 + 2 = 4 mm by default.
-4. Click **Generate preview**. The checks under the preview should all be ✓.
-5. Tick the files you want and click **Save**:
-   - **3MF**: the finished 3D model. Open it in PrusaSlicer, Bambu Studio, OrcaSlicer, Cura or another slicer and print.
-   - **STL**: the same 3D model, for programs that don't read 3MF.
-   - **STEP**: an exact solid for CAD programs such as FreeCAD, Fusion and Onshape, if you want to edit the coaster: add a name or logo, a recess for a cork pad, and so on.
-   - **DXF**: the flat 2D drawing, for CAD or laser-cutting programs.
-   - **SVG**: a picture of the design. **Open gallery** shows all saved SVGs side by side.
-
-Files go to `Maze Coaster Maker` in your Documents folder unless you choose another one. **Help → What the settings do** explains every setting.
-
-The app remembers your settings in `%APPDATA%\Maze Coaster Maker` on Windows, `~/Library/Application Support/Maze Coaster Maker` on a Mac and `~/.config/maze-coaster-maker` on Linux. To remove the app completely, delete it and that folder.
-
-## Printing tips
-
-- 0.4 mm nozzle and 0.2 mm layers. 1 mm walls print as two perimeters.
-- For walls in a second colour, add a filament change in your slicer at the base height (2 mm by default).
-- Cork or felt pads can go under the solid base.
-
-## Run from source
+<details>
+<summary>Running from the source code instead</summary>
 
 With Python 3.10 or newer:
 
@@ -44,60 +47,81 @@ pip install -r requirements.txt
 python coaster_app.py
 ```
 
-On Linux, Python's Tk support may be a separate package, for example `sudo apt install python3-tk` on Debian and Ubuntu.
+On Linux, Python's Tk support may be a separate package, such as `python3-tk` on Debian and Ubuntu. [Development](docs/development.md) covers building the app yourself.
 
-`coaster_gen.py` does the same from a terminal:
+</details>
 
-```
-python coaster_gen.py --shape hexagon --seed 42 --base 2 --wall-height 2
-python coaster_gen.py --pattern classical --center 20 --formats 3mf,step
-python coaster_gen.py --examples        # 10 starter designs in output/
-python coaster_gen.py --help            # every option
-```
+## Getting started
 
-## Building the app
+1. Pick a **shape** and a **pattern**.
+2. Click **Generate preview**. The checks under the preview should all show ✓.
+3. Click **New maze** until you like it.
+4. Tick **3MF** and click **Save**. The file goes to `Maze Coaster Maker` in your Documents folder.
+5. Open the 3MF in your slicer, such as PrusaSlicer, Bambu Studio, OrcaSlicer or Cura, and print.
 
-PyInstaller can only build for the system it runs on, so GitHub builds all five versions (Windows, Mac Apple silicon and Intel, Linux x64 and ARM) with [.github/workflows/build.yml](.github/workflows/build.yml). Each build is checked three ways before it's kept:
+![The app with a hexagon coaster previewed: settings on the left, the maze on the right, and the checks under it](docs/images/app-preview.png)
 
-- the window opens from source, makes a preview and saves every file type;
-- the packaged app builds and saves a coaster without a window;
-- the packaged app's window opens and stays open.
+## Using it
 
-Screenshots of each system are kept with the build.
+- **Wall thickness and gap width** set the maze; 1 mm each prints well with a 0.4 mm nozzle.
+- **Base thickness and wall height** set the 3D model; the coaster is base plus wall height thick, 4 mm by default.
+- **Save** writes the ticked files, and asks before replacing any. **Open gallery** shows every saved design side by side.
+- **Help → What the settings do** explains each setting in the app.
 
-To make a release:
+![A saved coaster, seen at an angle: the maze walls standing on a solid base](docs/images/model-3d.png)
 
-1. Check the **Unreleased** section of [CHANGELOG.md](CHANGELOG.md), raise `APP_VERSION` in `coaster_app.py`, and move those entries under the new version number.
-2. Commit, then push a tag with that version: `git tag v2.0.0` and `git push origin v2.0.0`.
+## Examples
 
-GitHub then builds everything and publishes the release, with the changelog entries as its notes. To build without releasing, run the **Build** workflow by hand from the repository's **Actions** tab.
+<details>
+<summary><b>A flower with a classical labyrinth</b></summary>
 
-To build on your own computer, for your system only:
+Shape **Flower**, pattern **Classical labyrinth**, everything else as it starts.
 
-```
-pip install -r requirements.txt
-python tools/build.py
-```
+![A six-petal flower coaster with a classical labyrinth in its middle](docs/images/example-classical-flower.png)
 
-The result lands in `dist/`.
+</details>
 
-## Project files
+<details>
+<summary><b>Wider walls for a 0.6 mm nozzle</b></summary>
 
-| File | What it is |
-|---|---|
-| `coaster_app.py` | The app's window |
-| `coaster_gen.py` | The maze and file generator (also usable from the command line) |
-| `tools/build.py` | Builds the standalone app for the system it runs on |
-| `tools/gui_check.py` | Opens the window, makes and saves a coaster, takes screenshots: the build's window check |
-| `tools/make_icon.py` | Draws the app icon during a build |
-| `tools/licences/` | Tcl/Tk's licence texts, for builds whose Python doesn't include them |
-| `.github/workflows/build.yml` | Builds, checks and releases the app on GitHub |
-| `requirements.txt` | Python packages for running from source and building |
-| `CHANGELOG.md` | What changed in each version, and what's waiting for the next release |
-| `LICENSE` | The GNU General Public License, version 3 |
+Shape **Hexagon**, wall thickness **1.5**, gap width **1.5**.
+
+![A hexagon coaster with a random maze of 1.5 mm walls and gaps](docs/images/example-chunky.png)
+
+</details>
+
+<details>
+<summary><b>A large centre for a logo or a name</b></summary>
+
+Shape **Circle**, centre diameter **40**. Add the logo or name afterwards in a CAD program, from the STEP file.
+
+![A round coaster with a random maze around a 40 mm centre](docs/images/example-big-centre.png)
+
+</details>
+
+## Troubleshooting
+
+- **A check shows ✗:** try another seed with **New maze**, or a wider wall or gap.
+- **The centre is bigger than I set:** the rings come in fixed steps; the note under the preview gives the size it used.
+- **The app takes a few seconds to open:** the Windows and Linux versions unpack themselves at each start.
+- **A STEP file is slow to open in CAD:** dense mazes make large files. In testing with OpenCascade, the geometry engine in FreeCAD, a 100 mm coaster with the default settings opened in about 3 seconds, and 150 mm coasters with 0.8 mm gaps in 11 to 17.
+
+## Documentation
+
+- [Settings](docs/settings.md): every setting, with its range and default.
+- [Files](docs/file-formats.md): what each saved file holds, and which program opens it.
+- [Command line](docs/command-line.md): making coasters from a terminal with `coaster_gen.py`.
+- [Development](docs/development.md): running from source, building the app, and releasing a version.
+
+## Support
+
+If Maze Coaster Maker is useful to you, a star on GitHub (the Star button at the top of this page) helps other people find it. If you'd like to support the work, you can do so through [GitHub Sponsors](https://github.com/sponsors/corautem) or on [Ko-fi](https://ko-fi.com/corautem).
+
+- **Bugs and ideas:** [GitHub issues](https://github.com/corautem/maze-coaster-maker/issues), with a form for each.
+- **Questions:** also in [GitHub issues](https://github.com/corautem/maze-coaster-maker/issues/new/choose), with the Question form.
 
 ## Licence
 
-Maze Coaster Maker is free software: you can share and change it under the terms of the [GNU General Public License](LICENSE), version 3 or (at your option) any later version. It comes with no warranty.
+Maze Coaster Maker is free software under the [GNU General Public License, version 3 or later](LICENSE). Copyright (C) 2026 corautem.
 
-The built app also contains other people's open-source software (Python, Tcl/Tk, shapely with GEOS, numpy, ezdxf and others). Their licences are listed in the app under **Help → Third-party licences**, and each release includes GEOS's source code, as GEOS's LGPL licence asks.
+The app is built with Python, Tcl/Tk, shapely (with GEOS), numpy, ezdxf and other open-source packages, each under its own licence. The app lists them under **Help → Third-party licences**, and [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) does the same here.

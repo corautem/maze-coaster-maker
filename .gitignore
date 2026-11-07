@@ -6,6 +6,8 @@ build/
 # generated designs, check screenshots and caches
 output/
 screenshots/
+# picture and recording scripts and drafts for the README (kept locally)
+dev-output/
 __pycache__/
 *.pyc
 

@@ -12,6 +12,7 @@ PyInstaller can only build for the system it runs on, so each system builds its 
 
     pip install -r requirements.txt
     python tools/build.py [--launch-check screenshots]
+    python tools/build.py --notices          # only refresh THIRD-PARTY-NOTICES.md
 """
 import argparse
 import importlib.metadata as metadata
@@ -176,6 +177,38 @@ def shapely_geos_version():
     return shapely.geos_version_string
 
 
+def write_notices(path):
+    """THIRD-PARTY-NOTICES.md for the repository: the same licence texts as the app's
+    Help → Third-party licences, from the packages installed here. Refresh it before a release."""
+    md = ["# Third-party notices", "",
+          "Maze Coaster Maker's built app contains the following open-source software, each under its own "
+          "licence. The same texts are in the app under **Help → Third-party licences**.", ""]
+
+    def block(name, text):
+        return [f"### {name}", "", "```text", text.strip("\n").replace("```", "'''"), "```", ""]
+
+    md += [f"## Python {platform.python_version()}", "", "PSF License.", ""]
+    md += block("LICENSE.txt", python_licence() or "https://docs.python.org/3/license.html")
+    md += ["## Tcl/Tk", "", "The toolkit that draws the window. BSD-style licence.", ""]
+    for name, text in tcl_tk_licences():
+        md += block(name, text)
+    for dist in bundled_distributions():
+        meta = dist.metadata
+        md += [f"## {meta['Name']} {dist.version}", "", f"{licence_name(meta)}.", ""]
+        if meta["Name"].lower() == "shapely":
+            geos = shapely_geos_version()
+            md += [f"Includes GEOS {geos} under the LGPL-2.1. Its source code: "
+                   f"https://download.osgeo.org/geos/geos-{geos}.tar.bz2, also attached to every "
+                   "Maze Coaster Maker release.", ""]
+        if meta["Name"].lower() == "pyinstaller":
+            md += ["Only PyInstaller's bootloader is part of the app; its licence's bootloader exception "
+                   "allows that.", ""]
+        for name, text in licence_texts(dist):
+            md += block(name, text)
+    path.write_text("\n".join(md), encoding="utf-8")
+    print(f"notices: {path} ({path.stat().st_size // 1024} KB)")
+
+
 # ---------------------------------------------------------------- build
 
 def built_program():
@@ -253,7 +286,12 @@ def main():
     parser = argparse.ArgumentParser(description="Build the standalone app for this system into dist/.")
     parser.add_argument("--launch-check", metavar="FOLDER", type=Path,
                         help="also start the packaged app's window and save a screenshot to FOLDER")
+    parser.add_argument("--notices", action="store_true",
+                        help="only write THIRD-PARTY-NOTICES.md from the installed packages, without building")
     options = parser.parse_args()
+    if options.notices:
+        write_notices(ROOT / "THIRD-PARTY-NOTICES.md")
+        return
     version = app_version()
     print(f"Building Maze Coaster Maker {version} for {SYSTEM} ({ARCH})", flush=True)
     shutil.rmtree(WORK, ignore_errors=True)

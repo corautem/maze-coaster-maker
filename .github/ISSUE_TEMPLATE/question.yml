@@ -1,0 +1,28 @@
+name: Question
+description: Ask how to do something with Maze Coaster Maker.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [README](https://github.com/corautem/maze-coaster-maker#readme) and the [Settings](https://github.com/corautem/maze-coaster-maker/blob/main/docs/settings.md) page may already answer it.
+
+        This page is public: leave out anything private, such as your name.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      placeholder: How do I make the walls a different colour from the base?
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What you have tried
+      description: Optional. Settings you used, and what happened.
+  - type: input
+    id: version
+    attributes:
+      label: App version and operating system
+      description: Optional. Help → About shows the version.
+      placeholder: 2.0.0 on Windows 11

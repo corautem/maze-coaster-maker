@@ -1,0 +1,85 @@
+name: Bug report
+description: Something in Maze Coaster Maker doesn't work, or a saved file is wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Check the [Troubleshooting](https://github.com/corautem/maze-coaster-maker#troubleshooting) list in the README first.
+
+        This page is public: leave out anything private, such as your name or folder paths that contain it.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happens
+      description: What you see, and what you expected instead.
+      placeholder: The preview shows a ✗ next to "walls", and the 3MF has a gap in one wall.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      description: The steps, starting from opening the app.
+      placeholder: |
+        1. Open the app.
+        2. Pick Flower and set Petals to 5.
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: file-name
+    attributes:
+      label: File name of the coaster
+      description: The name Save gave the file. It records the shape, pattern, seed and the settings you changed.
+      placeholder: flower5_theta_s8_w1.5-g1.5-r3
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings used
+      description: The settings you changed from the defaults, if the file name doesn't show them, such as the corner radius or a custom outline.
+      placeholder: Corner radius 10, Direction Outward
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Help → About shows it.
+      placeholder: "2.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: system
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS on Apple silicon
+        - macOS on Intel
+        - Linux (x64)
+        - Linux (ARM, such as a Raspberry Pi)
+        - Running from the source code
+    validations:
+      required: true
+  - type: input
+    id: system-version
+    attributes:
+      label: Operating system version
+      placeholder: Windows 11 24H2, macOS 15.6 or Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: program
+    attributes:
+      label: Program that opens the file
+      description: Optional. For a problem with a saved file, the slicer or CAD program and its version.
+      placeholder: PrusaSlicer 2.9 or FreeCAD 1.1.4
+  - type: textarea
+    id: file
+    attributes:
+      label: The saved file
+      description: Optional. Drag the file here; put a 3MF, STL or STEP file in a .zip first, as GitHub accepts .zip files.
+  - type: textarea
+    id: pictures
+    attributes:
+      label: Screenshots
+      description: Optional. Drag pictures of the app or of the print here.

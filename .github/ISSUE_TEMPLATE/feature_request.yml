@@ -1,0 +1,30 @@
+name: Feature idea
+description: Something Maze Coaster Maker could do that it doesn't do yet.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the idea. Check [Settings](https://github.com/corautem/maze-coaster-maker/blob/main/docs/settings.md) first: the app may already do it under another name.
+
+        This page is public: leave out anything private, such as your name.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What the app should do
+      placeholder: A square maze pattern as well as the circular ones.
+    validations:
+      required: true
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What it is for
+      description: The coaster or print you want to make.
+      placeholder: A set of square coasters that match a square table.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: An example
+      description: Optional. A picture, a sketch or a link to something that does this.

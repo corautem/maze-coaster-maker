@@ -15,6 +15,8 @@ Changes in the source code that aren't in a released version yet. They go out wi
 - Help → About describes the wall and gap widths as customisable. It said "1 mm walls and gaps", but 1 mm is only the default.
 - The window grows to fit its controls on systems with larger fonts. On screens too short for all the settings, the settings scroll and the Generate preview, Save, Open folder and Open gallery buttons stay in view.
 - `tools/build.py` replaces `build.ps1` and builds the app on any of the three systems.
+- Notes under the preview start with ℹ, which the standard Linux fonts include; the earlier symbol showed as an empty box there.
+- A new README with pictures and an animation, documentation pages for settings, files, the command line and development, issue forms for bugs, ideas and questions, and the third-party licence texts in `THIRD-PARTY-NOTICES.md`.
 
 ## 1.3.0
 
