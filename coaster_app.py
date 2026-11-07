@@ -141,7 +141,7 @@ class App(tk.Tk):
         self.title(APP_NAME)
         dpi = 1.0 if MAC else self.winfo_fpixels("1i") / 96  # macOS sizes windows in points already
         w = min(int(1120 * dpi), self.winfo_screenwidth() - 40)
-        h = min(int(780 * dpi), self.winfo_screenheight() - int(110 * dpi))  # keep clear of the taskbar
+        h = min(int(780 * dpi), self.usable_height(dpi))
         self.geometry(f"{w}x{h}+20+10")
         self.minsize(min(int(900 * dpi), w), min(int(640 * dpi), h))
         self.set_icon()
@@ -181,7 +181,7 @@ class App(tk.Tk):
         # fonts and widgets differ in size between systems; grow the window to fit the controls
         self.update_idletasks()
         w = min(max(w, self.winfo_reqwidth()), self.winfo_screenwidth() - 40)
-        h = min(max(h, self.winfo_reqheight()), self.winfo_screenheight() - int(80 * dpi))
+        h = min(max(h, self.winfo_reqheight()), self.usable_height(dpi))
         self.geometry(f"{w}x{h}+20+10")
         self.minsize(min(self.winfo_reqwidth(), w), min(int(480 * dpi), h))  # shorter: the settings scroll
         self.v["shape"].trace_add("write", self.shape_changed)
@@ -192,6 +192,20 @@ class App(tk.Tk):
             self.createcommand("tk::mac::Quit", self.close)  # Cmd+Q and the app menu's Quit
         self.bind(f"<{SHORTCUT[0]}-g>", lambda _e: self.generate())
         self.bind(f"<{SHORTCUT[0]}-s>", lambda _e: self.save())
+
+    def usable_height(self, dpi):
+        """Tallest the window's contents can be while the whole window, with its title bar and
+        menu, stays clear of the taskbar, the macOS menu bar and the Dock."""
+        if WINDOWS:
+            try:
+                from ctypes import wintypes
+                area = wintypes.RECT()
+                if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(area), 0):  # work area
+                    return area.bottom - area.top - int(80 * dpi)  # title bar, menu bar and a small gap
+            except (AttributeError, OSError):
+                pass
+            return self.winfo_screenheight() - int(130 * dpi)
+        return self.winfo_screenheight() - (110 if MAC else int(80 * dpi))
 
     def set_icon(self):
         """Window icon from the files the build bundles; running from source simply has none."""
