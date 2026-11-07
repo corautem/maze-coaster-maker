@@ -183,7 +183,7 @@ class App(tk.Tk):
         w = min(max(w, self.winfo_reqwidth()), self.winfo_screenwidth() - 40)
         h = min(max(h, self.winfo_reqheight()), self.winfo_screenheight() - int(80 * dpi))
         self.geometry(f"{w}x{h}+20+10")
-        self.minsize(min(self.winfo_reqwidth(), w), min(self.winfo_reqheight(), h))
+        self.minsize(min(self.winfo_reqwidth(), w), min(int(480 * dpi), h))  # shorter: the settings scroll
         self.v["shape"].trace_add("write", self.shape_changed)
         self.v["pattern"].trace_add("write", self.pattern_changed)
         self.update_states()
@@ -232,11 +232,38 @@ class App(tk.Tk):
     def build_controls(self):
         side = ttk.Frame(self, padding=(12, 12, 6, 12))
         side.grid(row=0, column=0, sticky="ns")
+        side.rowconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
 
+        # The settings scroll when the screen is too short for them; the buttons below stay in view.
+        scroller = tk.Canvas(side, highlightthickness=0, borderwidth=0, background=self.panel_bg)
+        scrollbar = ttk.Scrollbar(side, orient="vertical", command=scroller.yview)
+        scroller.configure(yscrollcommand=scrollbar.set, yscrollincrement=20)
+        scroller.grid(row=0, column=0, sticky="ns")
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(4, 0))
+        scrollbar.grid_remove()
+        settings = ttk.Frame(scroller)
+        scroller.create_window(0, 0, window=settings, anchor="nw")
+        self.scroller = scroller
+
+        def fit(_event=None):
+            w, h = settings.winfo_reqwidth(), settings.winfo_reqheight()
+            scroller.configure(width=w, height=h, scrollregion=(0, 0, w, h))
+            if scroller.winfo_height() > 1 and scroller.winfo_height() < h - 1:
+                scrollbar.grid()
+            else:
+                scrollbar.grid_remove()
+                scroller.yview_moveto(0)
+
+        settings.bind("<Configure>", fit)
+        scroller.bind("<Configure>", fit)
+        self.bind_all("<MouseWheel>", self.scroll_settings, add="+")
+        self.bind_all("<Button-4>", self.scroll_settings, add="+")
+        self.bind_all("<Button-5>", self.scroll_settings, add="+")
+
         def section(title):
-            frame = ttk.LabelFrame(side, text=title, padding=(10, 6))
+            frame = ttk.LabelFrame(settings, text=title, padding=(10, 6))
             frame.pack(fill="x", pady=(0, 10))
             frame.columnconfigure(1, weight=1)
             return frame
@@ -299,17 +326,36 @@ class App(tk.Tk):
             ttk.Checkbutton(kinds, text=label, variable=self.v[f"save_{fmt}"], onvalue="1", offvalue="0").grid(
                 row=i // 3, column=i % 3, sticky="w", padx=(0, 10), pady=1)
 
-        actions = ttk.Frame(side)
+        footer = ttk.Frame(side)
+        footer.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        actions = ttk.Frame(footer)
         actions.pack(fill="x")
         self.generate_button = ttk.Button(actions, text="Generate preview", style="Big.TButton", command=self.generate)
         self.generate_button.pack(side="left", expand=True, fill="x", ipady=6)
         self.save_button = ttk.Button(actions, text="Save", style="Big.TButton", command=self.save, state="disabled")
         self.save_button.pack(side="left", expand=True, fill="x", ipady=6, padx=(6, 0))
-        links = ttk.Frame(side)
+        links = ttk.Frame(footer)
         links.pack(fill="x", pady=(6, 0))
         ttk.Button(links, text="Open folder", command=self.open_folder).pack(side="left", expand=True, fill="x")
         ttk.Button(links, text="Open gallery", command=self.open_gallery).pack(
             side="left", expand=True, fill="x", padx=(6, 0))
+
+    def scroll_settings(self, event):
+        """Mouse wheel over the settings scrolls them, when they don't all fit."""
+        widget = event.widget
+        if not isinstance(widget, tk.Misc) or not str(widget).startswith(str(self.scroller)):
+            return
+        if widget.winfo_class() in ("TSpinbox", "TCombobox"):
+            return  # these use the wheel to change their value
+        if self.scroller.yview() == (0.0, 1.0):
+            return
+        if event.num in (4, 5):  # Linux
+            steps = -1 if event.num == 4 else 1
+        elif MAC:
+            steps = -event.delta
+        else:
+            steps = -int(event.delta / 120) or (-1 if event.delta > 0 else 1)
+        self.scroller.yview_scroll(steps, "units")
 
     def build_preview(self):
         right = ttk.Frame(self, padding=(6, 12, 12, 12))
