@@ -627,7 +627,7 @@ class App(tk.Tk):
         for label, ok in r.checks:
             t.insert("end", ("✓ " if ok else "✗ ") + label + "    ", "pass" if ok else "fail")
         for level, text in r.notes:
-            t.insert("end", ("\n⚠ " if level == "warning" else "\nⓘ ") + text, level)
+            t.insert("end", ("\n⚠ " if level == "warning" else "\nℹ ") + text, level)
         t.configure(state="disabled")
         self.fit_info()
 
