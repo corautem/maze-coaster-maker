@@ -15,3 +15,5 @@ Nothing to install, and you don't need Python.
 - **Linux:** unpack it and run `MazeCoasterMaker`. It needs glibc 2.35 or newer, as in Ubuntu 22.04, Debian 12, Fedora 36 and later.
 
 `geos-*.tar.bz2` is the source code of GEOS, a geometry library inside the app; GEOS's licence (LGPL) asks for its source to be offered with the app. Maze Coaster Maker's own source code is in the "Source code" archives below.
+
+Bugs, ideas and questions go to [GitHub issues](https://github.com/corautem/maze-coaster-maker/issues). If the app is useful to you, a star on GitHub helps other people find it.
